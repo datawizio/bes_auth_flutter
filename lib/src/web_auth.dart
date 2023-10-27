@@ -17,6 +17,7 @@ class WebAuth {
         isScrollControlled: true,
         backgroundColor: Colors.transparent,
         builder: (context) => Scaffold(
+              resizeToAvoidBottomInset: false,
               body: Stack(children: [
                 Align(
                     alignment: Alignment.topCenter,

@@ -13,3 +13,6 @@
 
 ## 0.0.9
 * Now window opens in fullscreen mode
+
+## 0.0.10
+* Add "resizeToAvoidBottomInset: false" for auth view
