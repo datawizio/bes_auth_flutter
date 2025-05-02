@@ -1,11 +1,8 @@
 import 'dart:async';
-import 'dart:io';
 
-import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:package_info_plus/package_info_plus.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 class WebAuth {
@@ -13,36 +10,9 @@ class WebAuth {
 
   WebAuth({required this.redirectUri});
 
-  Future<String> _generateUserAgent() async {
-    final PackageInfo packageInfo = await PackageInfo.fromPlatform();
-    final String appName = packageInfo.appName;
-    final String appVersion = packageInfo.version;
-
-    final String os = Platform.operatingSystem;
-    final String osVersion = Platform.operatingSystemVersion;
-
-    final DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
-    String deviceId;
-
-    if (Platform.isAndroid) {
-      final androidInfo = await deviceInfo.androidInfo;
-      deviceId = androidInfo.id;
-    } else if (Platform.isIOS) {
-      final iosInfo = await deviceInfo.iosInfo;
-      deviceId = iosInfo.identifierForVendor ?? 'unknown';
-    } else {
-      deviceId = Platform.localHostname;
-    }
-
-    return '$appName/$appVersion '
-          '($os; $osVersion; DeviceID/$deviceId)';
-  }
-
   Future<String> open(BuildContext context, String authUrl) async {
     Completer completer = Completer<String>();
     WebViewCookieManager().clearCookies();
-
-    final String userAgent = await _generateUserAgent();
 
     await showModalBottomSheet(
         context: context,
@@ -61,11 +31,9 @@ class WebAuth {
                 alignment: Alignment.bottomCenter,
                 child: SizedBox(
                   height: MediaQuery.of(context).size.height * 0.94,
-                  // CookieManager().clearCookies();
                   child: WebViewWidget(
                     controller: WebViewController()
                       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-                      ..setUserAgent(userAgent)
                       ..clearCache()
                       ..clearLocalStorage()
                       ..setNavigationDelegate(NavigationDelegate(

@@ -1,5 +1,9 @@
+import 'dart:io';
+
+import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:package_info_plus/package_info_plus.dart';
 
 import 'web_auth.dart';
 import 'constants.dart';
@@ -69,12 +73,39 @@ class BesAuth {
   }
 
   Future<BesSession> _getTokensWithCode(String code) async {
-    return await http.post(Uri.https(this.serviceUrl, GET_TOKENS_PATH), body: {
+    final userAgent = await _generateUserAgent();
+    
+    return await http.post(Uri.https(serviceUrl, GET_TOKENS_PATH), body: {
       "code": code,
       "client_id": clientId,
       "redirect_uri": redirectUri,
       "client_secret": clientSecret,
       "grant_type": "authorization_code",
-    }).then((response) => BesSession.fromJson(response.body));
+    }, headers: {'USER-AGENT': userAgent}).then((response) => BesSession.fromJson(response.body));
+  }
+
+  Future<String> _generateUserAgent() async {
+    final PackageInfo packageInfo = await PackageInfo.fromPlatform();
+    final String appName = packageInfo.appName;
+    final String appVersion = packageInfo.version;
+
+    final String os = Platform.operatingSystem;
+    final String osVersion = Platform.operatingSystemVersion;
+
+    final DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
+    String deviceId;
+
+    if (Platform.isAndroid) {
+      final androidInfo = await deviceInfo.androidInfo;
+      deviceId = androidInfo.id;
+    } else if (Platform.isIOS) {
+      final iosInfo = await deviceInfo.iosInfo;
+      deviceId = iosInfo.identifierForVendor ?? 'unknown';
+    } else {
+      deviceId = Platform.localHostname;
+    }
+
+    return '$appName/$appVersion '
+          '($os; $osVersion; DeviceID/$deviceId)';
   }
 }
