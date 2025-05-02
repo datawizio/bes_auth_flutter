@@ -60,16 +60,26 @@ class _LoginPageState extends State<LoginPage> {
         child: Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            RaisedButton(
-              child: Text("Authificate"),
+            ElevatedButton(
+              child: const Text("Authificate"),
+              style: ElevatedButton.styleFrom(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
               onPressed: () => _handleAuthificate(context),
             ),
             const SizedBox(
               width: 50,
             ),
-            RaisedButton(
-              child: Text("Logout"),
-              onPressed: _handleLogout,
+            ElevatedButton(
+              child: const Text("Logout"),
+              style: ElevatedButton.styleFrom(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8),
+                ),
+              ),
+              onPressed: () => _handleLogout(),
             ),
           ],
         ),
