@@ -89,7 +89,11 @@ class BesAuth {
     final String appName = packageInfo.appName;
     final String appVersion = packageInfo.version;
 
-    final String os = Platform.operatingSystem;
+    final String os = Platform.isAndroid
+        ? 'Android'
+        : Platform.isIOS
+            ? 'iOS'
+            : Platform.operatingSystem;
     final String osVersion = Platform.operatingSystemVersion;
 
     final DeviceInfoPlugin deviceInfo = DeviceInfoPlugin();
