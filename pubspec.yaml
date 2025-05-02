@@ -11,6 +11,8 @@ environment:
 dependencies:
   http: any
   webview_flutter: ^4.10.0
+  device_info_plus: any
+  package_info_plus: any
   flutter:
     sdk: flutter
 
