@@ -40,7 +40,10 @@ class WebAuth {
 
   Future<String> open(BuildContext context, String authUrl) async {
     Completer completer = Completer<String>();
+    WebViewCookieManager().clearCookies();
+
     final String userAgent = await _generateUserAgent();
+
     await showModalBottomSheet(
         context: context,
         isScrollControlled: true,
