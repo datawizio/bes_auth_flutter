@@ -29,8 +29,8 @@ class BesAuth {
 
   String get redirectUri => "$CAllBACK_URL_SCHEMA://$redirectPath";
 
-  Future<BesSession?> authenticate(BuildContext context) async {
-    String code = await _openWebLogin(context);
+  Future<BesSession?> authenticate([BuildContext? context]) async {
+    String code = await _openWebLogin();
     if (code == '') return null;
     return await _getTokensWithCode(code);
   }
@@ -60,13 +60,13 @@ class BesAuth {
     });
   }
 
-  Future<String> _openWebLogin(BuildContext context) async {
+  Future<String> _openWebLogin() async {
     String url = Uri.https(serviceUrl, AUTHORIZE_PATH, {
       "response_type": "code",
       "client_id": clientId,
       "redirect_uri": redirectUri,
     }).toString();
-    return await _webAuth.open(context, url).then((response) {
+    return await _webAuth.open(url).then((response) {
       if (response == '') return response;
       return Uri.parse(response).queryParameters["code"] ?? '';
     });

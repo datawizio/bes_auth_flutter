@@ -1,16 +1,16 @@
 name: bes_auth_flutter
 description: Plugin for easy implements "BES" authorization in your app.
-version: 0.0.10
+version: 0.1.0
 homepage: https://datawiz.io/
 repository: https://github.com/datawizio/bes_auth_flutter.git
 
 environment:
-  sdk: ">=3.0.5 <4.0.0"
+  sdk: ">=3.5.0 <4.0.0"
   flutter: ">=3.24.0"
 
 dependencies:
   http: any
-  webview_flutter: 4.0.2
+  flutter_web_auth_2: ^5.0.2
   device_info_plus: any
   package_info_plus: any
   flutter:
