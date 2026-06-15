@@ -61,18 +61,17 @@ class BesAuth {
   }
 
   Future<String> _openWebLogin() async {
-    // Drop the BES session cookie first by landing on /logout/, then let it
-    // redirect to the OAuth authorize endpoint via the `next` param:
-    //   /logout/?next=/o/authorize/?response_type=code&client_id=...&redirect_uri=...
-    // The unauthenticated /o/authorize/ sends the user to the login form
-    // itself, while cookies on other domains (e.g. Google SSO) stay intact,
-    // so the user can pick a different account on every sign-in.
-    final authorizeUrl = "$AUTHORIZE_PATH?"
+    // Hit the OAuth authorize endpoint with `force_login=true`, which tells
+    // BES to re-authenticate the user (drop its own session) instead of
+    // silently signing them back in:
+    //   /o/authorize/?response_type=code&client_id=...&redirect_uri=...&force_login=true
+    // Cookies on other domains (e.g. Google SSO) stay intact, so the user can
+    // pick a different account on every sign-in.
+    final url = "${Uri.https(serviceUrl, AUTHORIZE_PATH)}?"
         "response_type=code"
         "&client_id=$clientId"
-        "&redirect_uri=$redirectUri";
-    final url = "${Uri.https(serviceUrl, LOGOUT_PATH)}"
-        "?next=${Uri.encodeComponent(authorizeUrl)}";
+        "&redirect_uri=$redirectUri"
+        "&force_login=true";
     return await _webAuth.open(url).then((response) {
       if (response == '') return response;
       return Uri.parse(response).queryParameters["code"] ?? '';
