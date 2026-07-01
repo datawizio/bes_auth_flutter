@@ -14,6 +14,7 @@ class BesAuth {
   String serviceUrl;
   String clientSecret;
   String redirectPath;
+  final String? redirectUriOverride;
   late WebAuth _webAuth;
 
   BesAuth({
@@ -21,13 +22,18 @@ class BesAuth {
     required this.serviceUrl,
     required this.redirectPath,
     required this.clientSecret,
+    this.redirectUriOverride,
   }) {
     _webAuth = WebAuth(
       redirectUri: redirectUri,
     );
   }
 
-  String get redirectUri => "$CAllBACK_URL_SCHEMA://$redirectPath";
+  /// Full OAuth callback URL. [redirectUriOverride] wins when provided
+  /// (e.g. an https App Link on Android); otherwise the legacy custom
+  /// scheme `app://<redirectPath>` (still used by iOS).
+  String get redirectUri =>
+      redirectUriOverride ?? "$CAllBACK_URL_SCHEMA://$redirectPath";
 
   Future<BesSession?> authenticate([BuildContext? context]) async {
     String code = await _openWebLogin();

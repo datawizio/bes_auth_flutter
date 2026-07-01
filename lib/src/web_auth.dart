@@ -21,9 +21,17 @@ class WebAuth {
   /// empty string if the user cancels the flow.
   Future<String> open(String authUrl) async {
     try {
+      final uri = Uri.parse(redirectUri);
+      final isHttps = uri.scheme == 'https';
       final result = await FlutterWebAuth2.authenticate(
         url: authUrl,
         callbackUrlScheme: callbackUrlScheme,
+        options: FlutterWebAuth2Options(
+          // For https App Links (Android) the OS verifies host+path against
+          // the domain's assetlinks.json. Null for custom schemes (iOS app://).
+          httpsHost: isHttps ? uri.host : null,
+          httpsPath: isHttps ? uri.path : null,
+        ),
       );
       return result;
     } on Exception {
