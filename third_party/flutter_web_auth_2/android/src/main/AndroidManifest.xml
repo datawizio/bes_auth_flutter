@@ -1,0 +1,22 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.linusu.flutter_web_auth_2">
+
+    <application>
+        <activity android:name="com.linusu.flutter_web_auth_2.AuthenticationManagementActivity" />
+        <!-- Bound by the browser via the KEEP_ALIVE custom-tabs extra to keep this
+             app's process from being frozen/killed during the auth flow. -->
+        <service
+            android:name="com.linusu.flutter_web_auth_2.KeepAliveService"
+            android:exported="true" />
+    </application>
+
+    <queries>
+        <intent>
+            <action android:name="android.support.customtabs.action.CustomTabsService" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:scheme="https" />
+        </intent>
+    </queries>
+</manifest>

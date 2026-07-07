@@ -10,7 +10,15 @@ environment:
 
 dependencies:
   http: any
-  flutter_web_auth_2: ^5.0.2
+  # Vendored 5.0.3 with two patches (see third_party/flutter_web_auth_2):
+  # 1) CallbackActivity delivers the callback to the single pending session even
+  #    when the arriving scheme differs from the registered one (needed for the
+  #    backend's per-browser redirect rewriting: app:// for Chromium, https App
+  #    Link for Firefox).
+  # 2) Restored KEEP_ALIVE wiring (browser binds KeepAliveService; helps older
+  #    Chromium builds keep the app process from being frozen mid-auth).
+  flutter_web_auth_2:
+    path: third_party/flutter_web_auth_2
   device_info_plus: ^12.4.0
   package_info_plus: ^9.0.0
   flutter:
