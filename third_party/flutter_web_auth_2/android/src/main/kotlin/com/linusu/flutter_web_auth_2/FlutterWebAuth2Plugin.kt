@@ -23,6 +23,20 @@ class FlutterWebAuth2Plugin(
 ) : MethodCallHandler, FlutterPlugin, ActivityAware {
     companion object {
         val callbacks = mutableMapOf<String, Result>()
+
+        // The session id that currently owns each scheme's pending callback, and
+        // a monotonic source for it. `callbacks` is keyed only by scheme, but a
+        // `standard`-launchMode AuthenticationManagementActivity can outlive its
+        // session when a second open() on the same scheme replaces it; the stale
+        // instance carries an older id and consults this map to avoid evicting the
+        // live session that took its place. Written together with `callbacks` on
+        // the main thread, so an entry here always names the session whose Result
+        // is under the same scheme in `callbacks`. Never needs pruning: it is
+        // overwritten per authenticate and only ever read behind a `callbacks`
+        // presence check, so a stale entry from a delivered session is harmless.
+        val activeSessionIds = mutableMapOf<String, Long>()
+        private var sessionCounter = 0L
+        fun nextSessionId(): Long = ++sessionCounter
     }
 
     private fun initInstance(messenger: BinaryMessenger, context: Context) {
@@ -72,7 +86,13 @@ class FlutterWebAuth2Plugin(
                     null
                 )
 
+                // Tag this session so a superseded (stale) management activity can
+                // tell it no longer owns the scheme's callback (see
+                // AuthenticationManagementActivity). Set together with `callbacks`
+                // on the main thread, so the two never disagree.
+                val sessionId = nextSessionId()
                 callbacks[callbackUrlScheme] = resultCallback
+                activeSessionIds[callbackUrlScheme] = sessionId
                 activity.startActivity(Intent(activity, AuthenticationManagementActivity::class.java).apply {
                     putExtra(AuthenticationManagementActivity.KEY_AUTH_URI, url)
                     putExtra(AuthenticationManagementActivity.KEY_AUTH_OPTION_INTENT_FLAGS, options["intentFlags"] as Int)
@@ -81,6 +101,7 @@ class FlutterWebAuth2Plugin(
                     putExtra(AuthenticationManagementActivity.KEY_AUTH_CALLBACK_HOST, options["httpsHost"] as String?)
                     putExtra(AuthenticationManagementActivity.KEY_AUTH_CALLBACK_PATH, options["httpsPath"] as String?)
                     putExtra(AuthenticationManagementActivity.KEY_AUTH_OPTION_PREFER_EPHEMERAL, options["preferEphemeral"] as Boolean? ?: false)
+                    putExtra(AuthenticationManagementActivity.KEY_AUTH_SESSION_ID, sessionId)
                 })
             }
 

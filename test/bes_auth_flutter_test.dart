@@ -136,6 +136,41 @@ void main() {
         expect(WebAuth.lastFailureMessage, isNotNull);
       });
     });
+
+    // The Dart side of the supersede contract: when a second sign-in starts on
+    // the same scheme before the first round-trips, the plugin fails the first
+    // (CALLBACK_DROPPED) and lets the second proceed. Modelled at the mock
+    // boundary — the plugin's stale-instance ownership guard is Kotlin and
+    // device-QA only. What this locks is that one open()'s failure never
+    // corrupts a concurrent open()'s own result: the superseded first resolves
+    // empty, the live second still returns its own redirect.
+    test('a superseded first open does not abort a concurrent second', () async {
+      final auth = WebAuth(redirectUri: 'app://callback');
+      final first = Completer<Object?>();
+      var authenticateCalls = 0;
+      answerWith((call) async {
+        if (call.method != 'authenticate') return null;
+        authenticateCalls++;
+        if (authenticateCalls == 1) {
+          return first.future; // first session's browser is still outstanding
+        }
+        // A second authenticate on the same scheme: the plugin drops the first
+        // and the second goes on to succeed.
+        if (!first.isCompleted) {
+          first.completeError(PlatformException(
+              code: 'CALLBACK_DROPPED',
+              message: 'Superseded by a newer authentication.'));
+        }
+        return 'app://callback?code=SECOND';
+      });
+
+      final f1 = auth.open('https://example.test/o/authorize/');
+      final f2 = auth.open('https://example.test/o/authorize/');
+
+      expect(await f1, '', reason: 'the superseded first resolves, not hangs');
+      expect(await f2, 'app://callback?code=SECOND',
+          reason: 'the live second session must not be aborted');
+    });
   });
 
   group('BesAuth OAuth state (authorization-code-injection guard)', () {

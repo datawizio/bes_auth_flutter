@@ -24,6 +24,7 @@ class AuthenticationManagementActivity : ComponentActivity() {
         const val KEY_AUTH_CALLBACK_SCHEME: String = "authCallbackScheme"
         const val KEY_AUTH_CALLBACK_HOST: String = "authCallbackHost"
         const val KEY_AUTH_CALLBACK_PATH: String = "authCallbackPath"
+        const val KEY_AUTH_SESSION_ID: String = "authSessionId"
 
         fun createResponseHandlingIntent(context: Context): Intent {
             val intent = Intent(context, AuthenticationManagementActivity::class.java)
@@ -40,6 +41,14 @@ class AuthenticationManagementActivity : ComponentActivity() {
     private lateinit var callbackScheme: String
     private var callbackHost: String? = null
     private var callbackPath: String? = null
+
+    // Identifies the one authenticate() call this activity instance belongs to.
+    // launchMode is `standard`, so a second open() on the same scheme spawns a
+    // second instance while the scheme-keyed callbacks map holds only the newest
+    // session. This is how a superseded (stale) instance recognises that the
+    // pending callback now belongs to a newer session and must not be touched.
+    // -1 is the "never set" sentinel; real ids from the plugin start at 1.
+    private var sessionId: Long = -1L
 
     private lateinit var authLauncher: ActivityResultLauncher<Intent>
 
@@ -160,23 +169,43 @@ class AuthenticationManagementActivity : ComponentActivity() {
         // remove the callback. If it is STILL pending here, nothing delivered a
         // result and it would dangle forever — the silent sign-in that never
         // ends. Fail it now so Dart's `authenticate` future resolves.
-        val pending = FlutterWebAuth2Plugin.callbacks.remove(callbackScheme)
-        if (pending != null) {
-            if (shouldUseAuthTabs()) {
-                // Auth Tab path: a real cancel arrives through handleAuthResult
-                // (RESULT_CANCELED) and removes the callback before this point,
-                // so a callback still pending here is a genuine drop — the tab
-                // returned without ever delivering a result.
-                Log.w(LOG_TAG, "returning without delivering callback for scheme $callbackScheme; failing it")
-                pending.error("CALLBACK_DROPPED", "Browser returned without delivering a redirect.", null)
-            } else {
-                // Custom Tabs path has no result signal at all (launchUrl, no
-                // ActivityResult): returning here without a redirect is the user
-                // dismissing the tab. Report it as a cancel — not a device error
-                // — to match the Auth Tab cancel and keep the Sentry signal clean.
-                Log.w(LOG_TAG, "custom tab dismissed without a redirect for scheme $callbackScheme")
-                pending.error("CANCELED", "User canceled authentication", null)
+        //
+        // But only if this instance still OWNS the scheme's callback. launchMode
+        // is `standard`: a second open() on the same scheme spawns a second
+        // instance and the plugin advances activeSessionIds[scheme] to the new
+        // session. A superseded instance reaching here must NOT remove the map
+        // entry — that entry now belongs to the live session the user is still
+        // completing, and evicting it would false-abort that login. The ownership
+        // check gates the whole remove: a stale instance leaves the map alone. If
+        // the id matches but nothing is pending, the result was already delivered
+        // (success/cancel) and removed — a normal return, so there is nothing to
+        // fail.
+        val ownsCallback =
+            FlutterWebAuth2Plugin.activeSessionIds[callbackScheme] == sessionId
+        if (ownsCallback) {
+            val pending = FlutterWebAuth2Plugin.callbacks.remove(callbackScheme)
+            FlutterWebAuth2Plugin.activeSessionIds.remove(callbackScheme)
+            if (pending != null) {
+                if (shouldUseAuthTabs()) {
+                    // Auth Tab path: a real cancel arrives through handleAuthResult
+                    // (RESULT_CANCELED) and removes the callback before this point,
+                    // so a callback still pending here is a genuine drop — the tab
+                    // returned without ever delivering a result.
+                    Log.w(LOG_TAG, "returning without delivering callback for scheme $callbackScheme; failing it")
+                    pending.error("CALLBACK_DROPPED", "Browser returned without delivering a redirect.", null)
+                } else {
+                    // Custom Tabs path has no result signal at all (launchUrl, no
+                    // ActivityResult): returning here without a redirect is the user
+                    // dismissing the tab. Report it as a cancel — not a device error
+                    // — to match the Auth Tab cancel and keep the Sentry signal clean.
+                    Log.w(LOG_TAG, "custom tab dismissed without a redirect for scheme $callbackScheme")
+                    pending.error("CANCELED", "User canceled authentication", null)
+                }
             }
+        } else {
+            // Superseded by a newer session on the same scheme (or the process was
+            // restarted). Leave the live callback for its own instance to resolve.
+            Log.w(LOG_TAG, "stale AuthenticationManagementActivity for scheme $callbackScheme; leaving the live session untouched")
         }
         finish()
     }
@@ -216,6 +245,7 @@ class AuthenticationManagementActivity : ComponentActivity() {
         outState.putString(KEY_AUTH_CALLBACK_SCHEME, callbackScheme)
         outState.putString(KEY_AUTH_CALLBACK_HOST, callbackHost)
         outState.putString(KEY_AUTH_CALLBACK_PATH, callbackPath)
+        outState.putLong(KEY_AUTH_SESSION_ID, sessionId)
     }
 
     private fun extractState(state: Bundle?) {
@@ -236,5 +266,6 @@ class AuthenticationManagementActivity : ComponentActivity() {
         callbackScheme = state.getString(KEY_AUTH_CALLBACK_SCHEME)!!
         callbackHost = state.getString(KEY_AUTH_CALLBACK_HOST)
         callbackPath = state.getString(KEY_AUTH_CALLBACK_PATH)
+        sessionId = state.getLong(KEY_AUTH_SESSION_ID, -1L)
     }
 }
