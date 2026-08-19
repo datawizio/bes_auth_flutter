@@ -32,3 +32,19 @@
   (required by `flutter_web_auth_2` / `ASWebAuthenticationSession`).
 * Consumers must register the SSO callback URL scheme — see README
   ("SSO via system browser").
+
+## 0.2.0
+* Security: verify an OAuth `state` nonce on the callback and reject a
+  redirect whose state does not match the value sent, before the code is
+  exchanged — closes an authorization-code injection reachable via a crafted
+  ACTION_SEND or direct VIEW intent (custom scheme or https App Link).
+* Security: on Android, ACTION_SEND callback recovery now delivers only a URI
+  that matches this app's own registered redirect filters, dropping the
+  any-scheme fallback.
+* Observability: surface previously silent web-auth failures
+  (WebAuth.lastFailureCode, OAUTH_ERROR / NO_CODE_IN_REDIRECT, token-exchange
+  timeout + status check, Kotlin seam logging that never records the URL).
+
+  NOTE: the state check requires the authorization server to echo `state`
+  unchanged (RFC 6749 §10.12) on every redirect variant; verify end-to-end on
+  device before release, as a login fails closed if it is stripped.
