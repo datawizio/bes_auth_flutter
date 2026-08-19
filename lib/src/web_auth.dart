@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
@@ -30,6 +32,26 @@ class WebAuth {
   /// The failure's own words, for the code that carries no detail of its own.
   static String? lastFailureMessage;
 
+  /// Last-resort ceiling on a single [open], so an undelivered callback can
+  /// never hang the sign-in forever.
+  ///
+  /// The real fix lives in the Android plugin, which now fails a pending
+  /// callback it cannot deliver (`NO_ACTIVITY`, `CALLBACK_DROPPED`) instead of
+  /// dropping it in silence — a real login resolves through that path, never
+  /// this timer. This guards only the residual: some drop path we did not
+  /// enumerate that would otherwise leave [FlutterWebAuth2.authenticate]
+  /// awaiting with nothing said.
+  ///
+  /// Ten minutes is deliberately far past the longest realistic interactive
+  /// login — open the tab, pick a Google account, type a password from a
+  /// manager, clear an SMS/authenticator 2FA with app-switching, accept a
+  /// consent screen — all of which complete in well under a minute of in-flight
+  /// time even when slow. The plugin future is not cancellable, so a timer that
+  /// fired on a login the user is still completing would abandon it; ten minutes
+  /// makes that impossible in practice while still bounding the infinite spinner.
+  /// A shorter timeout that could abort a real login would be worse than the bug.
+  static const Duration _authTimeout = Duration(minutes: 10);
+
   /// Launches [authUrl] in the system browser and returns the full
   /// redirect URL once the IdP navigates back to [redirectUri], or an
   /// empty string if the user cancels the flow.
@@ -46,16 +68,26 @@ class WebAuth {
           httpsHost: isHttps ? uri.host : null,
           httpsPath: isHttps ? uri.path : null,
         ),
-      );
+      ).timeout(_authTimeout);
       lastFailureCode = null;
       lastFailureMessage = null;
       return result;
     } on PlatformException catch (e) {
-      // The plugin's own vocabulary: CANCELED, FAILED, NO_BROWSER. Every one of
-      // them used to arrive here and leave as the same empty string.
+      // The plugin's own vocabulary: CANCELED, FAILED, NO_BROWSER, and now
+      // NO_ACTIVITY / CALLBACK_DROPPED. Every one of them used to arrive here
+      // and leave as the same empty string.
       lastFailureCode = e.code;
       lastFailureMessage = e.message;
       debugPrint('[bes_auth] web auth failed: ${e.code} ${e.message ?? ''}');
+      return '';
+    } on TimeoutException catch (e) {
+      // The backstop fired: no callback in [_authTimeout]. Same empty-string
+      // shape as a caught failure, with a code the host can tell apart from a
+      // user who canceled.
+      lastFailureCode = 'TIMEOUT_NO_CALLBACK';
+      lastFailureMessage =
+          'no web-auth callback within ${_authTimeout.inMinutes} min';
+      debugPrint('[bes_auth] web auth timed out: ${e.message ?? ''}');
       return '';
     } on Exception catch (e) {
       lastFailureCode = 'UNKNOWN';

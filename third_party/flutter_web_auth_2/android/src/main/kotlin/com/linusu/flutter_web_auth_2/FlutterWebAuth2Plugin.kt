@@ -47,15 +47,33 @@ class FlutterWebAuth2Plugin(
                 val callbackUrlScheme: String = call.argument<String>("callbackUrlScheme")!!
                 val options = call.argument<Map<String, Any>>("options")!!
 
-                callbacks[callbackUrlScheme] = resultCallback
+                val activity = this.activity
                 if (activity == null) {
-                    // The callback is stored and nothing is launched: no browser
-                    // opens, no result ever arrives, and Dart's `authenticate`
-                    // future never completes. The sign-in button spins forever
-                    // and no exception is raised anywhere.
-                    Log.w(LOG_TAG, "no attached activity; $callbackUrlScheme stored but never launched")
+                    // No attached activity: nothing can launch the browser, so
+                    // storing the callback would leave Dart's `authenticate`
+                    // future pending forever (no browser opens → no redirect → no
+                    // resume to complete it). Fail it now with a distinct code the
+                    // host can report, and store nothing that could dangle.
+                    resultCallback.error(
+                        "NO_ACTIVITY",
+                        "Plugin is not attached to an activity; cannot launch the browser.",
+                        null
+                    )
+                    return
                 }
-                activity?.startActivity(Intent(activity, AuthenticationManagementActivity::class.java).apply {
+
+                // A previous authenticate for this same scheme whose callback
+                // never resolved would be silently overwritten by the next line,
+                // stranding its Result forever. Fail it first so its Dart future
+                // resolves instead of hanging.
+                callbacks.remove(callbackUrlScheme)?.error(
+                    "CALLBACK_DROPPED",
+                    "Superseded by a newer authentication for the same callback scheme.",
+                    null
+                )
+
+                callbacks[callbackUrlScheme] = resultCallback
+                activity.startActivity(Intent(activity, AuthenticationManagementActivity::class.java).apply {
                     putExtra(AuthenticationManagementActivity.KEY_AUTH_URI, url)
                     putExtra(AuthenticationManagementActivity.KEY_AUTH_OPTION_INTENT_FLAGS, options["intentFlags"] as Int)
                     putExtra(AuthenticationManagementActivity.KEY_AUTH_OPTION_TARGET_PACKAGE, findTargetBrowserPackageName(options))

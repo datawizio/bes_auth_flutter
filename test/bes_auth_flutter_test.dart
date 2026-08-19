@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:fake_async/fake_async.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:bes_auth_flutter/bes_auth_flutter.dart';
@@ -62,6 +65,76 @@ void main() {
       expect(result, 'app://callback?code=abc123');
       expect(WebAuth.lastFailureCode, isNull);
       expect(WebAuth.lastFailureMessage, isNull);
+    });
+
+    // GAP 1 — the Android plugin used to drop an undeliverable callback in
+    // silence, so Dart's `authenticate` future never completed and the sign-in
+    // button spun forever with nothing said. The plugin now fails the pending
+    // Result with a distinct code instead of dropping it. These lock the two
+    // codes it emits so they survive the round-trip to a host that reads
+    // lastFailureCode (the fix that makes each one a separable Sentry identity).
+
+    // Emitted when the plugin is asked to authenticate with no attached
+    // activity: there is nothing to launch a browser from, so it fails now
+    // rather than storing a callback that can never be launched.
+    test('carries NO_ACTIVITY through instead of hanging', () async {
+      answerWith((call) async => throw PlatformException(
+          code: 'NO_ACTIVITY',
+          message: 'Plugin is not attached to an activity.'));
+
+      final result = await WebAuth(redirectUri: 'app://callback')
+          .open('https://example.test/o/authorize/');
+
+      expect(result, '');
+      expect(WebAuth.lastFailureCode, 'NO_ACTIVITY');
+      expect(WebAuth.lastFailureMessage, 'Plugin is not attached to an activity.');
+    });
+
+    // Emitted when a pending callback is abandoned: superseded by a second
+    // authenticate on the same scheme, or a browser that returned without ever
+    // delivering the redirect.
+    test('carries CALLBACK_DROPPED through, distinct from a cancel', () async {
+      answerWith((call) async => throw PlatformException(
+          code: 'CALLBACK_DROPPED',
+          message: 'Browser closed without delivering a redirect.'));
+
+      final result = await WebAuth(redirectUri: 'app://callback')
+          .open('https://example.test/o/authorize/');
+
+      expect(result, '');
+      expect(WebAuth.lastFailureCode, 'CALLBACK_DROPPED');
+      expect(WebAuth.lastFailureCode, isNot('CANCELED'));
+    });
+
+    // Defensive backstop for any drop path the plugin fixes do not cover: a
+    // callback that simply never arrives must not hang `authenticate` forever.
+    // Driven on fake time so the real 10-minute deadline is exercised honestly
+    // without the test waiting for it.
+    test('times out a callback that never arrives, and not a slow login', () {
+      fakeAsync((async) {
+        final never = Completer<Object?>(); // a browser that never comes back
+        answerWith((call) => never.future);
+
+        String? result;
+        WebAuth(redirectUri: 'app://callback')
+            .open('https://example.test/o/authorize/')
+            .then((r) => result = r);
+
+        // Nine minutes in, a genuinely slow interactive login is still going:
+        // the backstop must not have fired.
+        async.elapse(const Duration(minutes: 9));
+        async.flushMicrotasks();
+        expect(result, isNull,
+            reason: 'a real login in progress must never be aborted early');
+
+        // Past the deadline the future resolves to the same empty-string
+        // failure shape as a caught error, carrying the timeout code.
+        async.elapse(const Duration(minutes: 2));
+        async.flushMicrotasks();
+        expect(result, '');
+        expect(WebAuth.lastFailureCode, 'TIMEOUT_NO_CALLBACK');
+        expect(WebAuth.lastFailureMessage, isNotNull);
+      });
     });
   });
 

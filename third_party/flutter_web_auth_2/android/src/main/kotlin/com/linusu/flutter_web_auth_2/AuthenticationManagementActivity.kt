@@ -155,10 +155,29 @@ class AuthenticationManagementActivity : ComponentActivity() {
          * completed or cancelled authentication.
          * Either way we want to return to our original flutter activity, so just finish here
          */
-        // The completed case has already delivered through CallbackActivity or
-        // handleAuthResult; anything else leaves Dart's `authenticate` future
-        // hanging with nothing said, which is the silent sign-in that never ends.
-        Log.w(LOG_TAG, "returning without delivering callback for scheme $callbackScheme")
+        // The completed case has already delivered through CallbackActivity (a
+        // redirect) or handleAuthResult (the Auth Tab result), both of which
+        // remove the callback. If it is STILL pending here, nothing delivered a
+        // result and it would dangle forever — the silent sign-in that never
+        // ends. Fail it now so Dart's `authenticate` future resolves.
+        val pending = FlutterWebAuth2Plugin.callbacks.remove(callbackScheme)
+        if (pending != null) {
+            if (shouldUseAuthTabs()) {
+                // Auth Tab path: a real cancel arrives through handleAuthResult
+                // (RESULT_CANCELED) and removes the callback before this point,
+                // so a callback still pending here is a genuine drop — the tab
+                // returned without ever delivering a result.
+                Log.w(LOG_TAG, "returning without delivering callback for scheme $callbackScheme; failing it")
+                pending.error("CALLBACK_DROPPED", "Browser returned without delivering a redirect.", null)
+            } else {
+                // Custom Tabs path has no result signal at all (launchUrl, no
+                // ActivityResult): returning here without a redirect is the user
+                // dismissing the tab. Report it as a cancel — not a device error
+                // — to match the Auth Tab cancel and keep the Sentry signal clean.
+                Log.w(LOG_TAG, "custom tab dismissed without a redirect for scheme $callbackScheme")
+                pending.error("CANCELED", "User canceled authentication", null)
+            }
+        }
         finish()
     }
 
