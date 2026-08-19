@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:device_info_plus/device_info_plus.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +10,25 @@ import 'package:package_info_plus/package_info_plus.dart';
 import 'web_auth.dart';
 import 'constants.dart';
 import 'bes_session.dart';
+
+/// Thrown when the `state` on the OAuth redirect does not match the random
+/// value this client put on the authorization request.
+///
+/// A matching `state` is the only thing that ties a returned authorization
+/// `code` to the sign-in the user actually started. A redirect injected by a
+/// hostile app — a bare `code`, or one carrying a `state` this app never
+/// issued — fails this check and is rejected before the code is exchanged, so
+/// the victim is never signed into the attacker's account. The check lives in
+/// Dart, so it holds for a redirect delivered by a direct VIEW intent too, not
+/// only the SEND path the Kotlin layer already vets.
+class StateMismatchException implements Exception {
+  StateMismatchException([this.message = 'OAuth state did not match']);
+
+  final String message;
+
+  @override
+  String toString() => 'StateMismatchException: $message';
+}
 
 class BesAuth {
   String clientId;
@@ -70,17 +91,39 @@ class BesAuth {
     // Hit the OAuth authorize endpoint with `force_login=true`, which tells
     // BES to re-authenticate the user (drop its own session) instead of
     // silently signing them back in:
-    //   /o/authorize/?response_type=code&client_id=...&redirect_uri=...&force_login=true
+    //   /o/authorize/?response_type=code&client_id=...&redirect_uri=...&state=...&force_login=true
     // Cookies on other domains (e.g. Google SSO) stay intact, so the user can
     // pick a different account on every sign-in.
+    //
+    // `state` is a fresh random nonce, unique to this flow, that the server
+    // must echo back on the redirect (RFC 6749 §10.12). The callback below
+    // rejects any redirect that does not carry it, which is what stops a
+    // hostile app from injecting its own `code` into this pending session.
+    final state = _generateState();
     final url = "${Uri.https(serviceUrl, AUTHORIZE_PATH)}?"
         "response_type=code"
         "&client_id=$clientId"
         "&redirect_uri=$redirectUri"
+        "&state=$state"
         "&force_login=true";
     return await _webAuth.open(url).then((response) {
       if (response == '') return response;
-      return Uri.parse(response).queryParameters["code"] ?? '';
+      final params = Uri.parse(response).queryParameters;
+
+      // Authorization-code-injection guard. A redirect that did not come from
+      // the request we just sent cannot carry the `state` we put on it, so a
+      // missing or non-matching value means the `code` beside it is not ours —
+      // reject before it is read, let alone exchanged. Both the VIEW and the
+      // SEND-recovery paths deliver the full redirect URI with its query, so a
+      // legitimate `state` is present on either; recovery is not exempt.
+      final returnedState = params["state"];
+      if (returnedState == null || !_constantTimeEquals(returnedState, state)) {
+        throw StateMismatchException(returnedState == null
+            ? 'the redirect carried no state'
+            : 'the returned state did not match the value sent');
+      }
+
+      return params["code"] ?? '';
     });
   }
 
@@ -96,6 +139,29 @@ class BesAuth {
     }, headers: {
       'USER-AGENT': userAgent
     }).then((response) => BesSession.fromJson(response.body));
+  }
+
+  /// A fresh, unguessable `state` nonce for one authorization request.
+  ///
+  /// 32 bytes from [Random.secure] (256 bits), base64url without padding so the
+  /// value is URL-safe and needs no further encoding in the query string.
+  String _generateState() {
+    final random = Random.secure();
+    final bytes = List<int>.generate(32, (_) => random.nextInt(256));
+    return base64UrlEncode(bytes).replaceAll('=', '');
+  }
+
+  /// Length-checked, difference-accumulating string compare. `state` is a
+  /// client-side nonce, so a timing side-channel is not realistically reachable
+  /// here — plain `==` would be sound — but the loop is cheap and settles the
+  /// question outright.
+  bool _constantTimeEquals(String a, String b) {
+    if (a.length != b.length) return false;
+    var diff = 0;
+    for (var i = 0; i < a.length; i++) {
+      diff |= a.codeUnitAt(i) ^ b.codeUnitAt(i);
+    }
+    return diff == 0;
   }
 
   /// Повертає User-Agent виду:
