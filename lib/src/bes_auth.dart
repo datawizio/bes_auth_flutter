@@ -123,22 +123,51 @@ class BesAuth {
             : 'the returned state did not match the value sent');
       }
 
-      return params["code"] ?? '';
+      final code = params["code"];
+      if (code != null) return code;
+
+      // A redirect that came back, and came back refusing. Folding it into the
+      // same '' as "the browser never returned" is what made an
+      // `access_denied` from BES indistinguishable from a closed tab.
+      final error = params["error"];
+      if (error != null) {
+        debugPrint('[bes_auth] authorize returned an error: $error'
+            '${params["error_description"] == null ? '' : ' — ${params["error_description"]}'}');
+        WebAuth.lastFailureCode = 'OAUTH_ERROR';
+        WebAuth.lastFailureMessage = params["error_description"] ?? error;
+      } else {
+        debugPrint('[bes_auth] redirect carried neither a code nor an error');
+        WebAuth.lastFailureCode = 'NO_CODE_IN_REDIRECT';
+        WebAuth.lastFailureMessage = null;
+      }
+      return '';
     });
   }
 
   Future<BesSession> _getTokensWithCode(String code) async {
     final userAgent = await _generateUserAgent();
 
-    return await http.post(Uri.https(serviceUrl, GET_TOKENS_PATH), body: {
-      "code": code,
-      "client_id": clientId,
-      "redirect_uri": redirectUri,
-      "client_secret": clientSecret,
-      "grant_type": "authorization_code",
-    }, headers: {
-      'USER-AGENT': userAgent
-    }).then((response) => BesSession.fromJson(response.body));
+    final response = await http.post(Uri.https(serviceUrl, GET_TOKENS_PATH),
+        body: {
+          "code": code,
+          "client_id": clientId,
+          "redirect_uri": redirectUri,
+          "client_secret": clientSecret,
+          "grant_type": "authorization_code",
+        },
+        // Unbounded, this hangs on a captive portal or a black-holed connection
+        // for as long as the OS lets it, with the sign-in button spinning.
+        headers: {'USER-AGENT': userAgent}).timeout(const Duration(seconds: 30));
+
+    if (response.statusCode != 200) {
+      // The old code handed an error body straight to BesSession.fromJson,
+      // which read fields that were not there — so a rejected exchange surfaced
+      // as a TypeError naming a token field, and the app's catch showed the
+      // user a message about something that was never the problem.
+      throw Exception(
+          'BES token exchange failed: HTTP ${response.statusCode}');
+    }
+    return BesSession.fromJson(response.body);
   }
 
   /// A fresh, unguessable `state` nonce for one authorization request.

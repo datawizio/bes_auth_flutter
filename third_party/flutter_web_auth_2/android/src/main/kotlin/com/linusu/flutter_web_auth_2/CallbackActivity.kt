@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 
 class CallbackActivity : Activity() {
 
@@ -34,6 +35,19 @@ class CallbackActivity : Activity() {
                 ?: FlutterWebAuth2Plugin.callbacks.keys.singleOrNull()?.let {
                     FlutterWebAuth2Plugin.callbacks.remove(it)
                 }
+            if (callback == null) {
+                // The redirect arrived and there was nobody left to hand it to.
+                // The count tells which failure it is: 0 pending means the
+                // process that started the sign-in is gone — killed while the
+                // tab was in front — and 2 or more means several sessions are
+                // waiting and no scheme matched any of them, which is a second
+                // tap on the sign-in button. The URL stays out of the log: it
+                // carries the authorization code.
+                Log.w(
+                    LOG_TAG,
+                    "dropping callback for scheme $scheme, ${FlutterWebAuth2Plugin.callbacks.size} pending"
+                )
+            }
             callback?.success(url.toString())
         }
         startActivity(AuthenticationManagementActivity.createResponseHandlingIntent(this))

@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.browser.customtabs.CustomTabsClient
 
 import io.flutter.embedding.engine.plugins.FlutterPlugin
@@ -47,6 +48,13 @@ class FlutterWebAuth2Plugin(
                 val options = call.argument<Map<String, Any>>("options")!!
 
                 callbacks[callbackUrlScheme] = resultCallback
+                if (activity == null) {
+                    // The callback is stored and nothing is launched: no browser
+                    // opens, no result ever arrives, and Dart's `authenticate`
+                    // future never completes. The sign-in button spins forever
+                    // and no exception is raised anywhere.
+                    Log.w(LOG_TAG, "no attached activity; $callbackUrlScheme stored but never launched")
+                }
                 activity?.startActivity(Intent(activity, AuthenticationManagementActivity::class.java).apply {
                     putExtra(AuthenticationManagementActivity.KEY_AUTH_URI, url)
                     putExtra(AuthenticationManagementActivity.KEY_AUTH_OPTION_INTENT_FLAGS, options["intentFlags"] as Int)
@@ -59,6 +67,12 @@ class FlutterWebAuth2Plugin(
             }
 
             "cleanUpDanglingCalls" -> {
+                // Every one of these reaches Dart as a cancellation the user
+                // never performed. A non-zero count here is a sign-in that was
+                // still pending when the app came back up.
+                if (callbacks.isNotEmpty()) {
+                    Log.w(LOG_TAG, "cancelling ${callbacks.size} dangling call(s)")
+                }
                 callbacks.forEach { (_, danglingResultCallback) ->
                     danglingResultCallback.error("CANCELED", "User canceled login", null)
                 }

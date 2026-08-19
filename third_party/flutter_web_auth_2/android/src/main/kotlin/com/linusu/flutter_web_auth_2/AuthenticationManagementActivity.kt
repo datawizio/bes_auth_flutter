@@ -74,6 +74,11 @@ class AuthenticationManagementActivity : ComponentActivity() {
             }
 
             AuthTabIntent.RESULT_CANCELED -> {
+                // "Canceled" is also what the Auth Tab reports when the system
+                // took it down without the user touching anything, so this line
+                // is the difference between a user who gave up and a device that
+                // dropped the session.
+                Log.w(LOG_TAG, "Auth Tab reported CANCELED for scheme $callbackScheme")
                 callback.error("CANCELED", "User canceled authentication", null)
             }
 
@@ -150,6 +155,10 @@ class AuthenticationManagementActivity : ComponentActivity() {
          * completed or cancelled authentication.
          * Either way we want to return to our original flutter activity, so just finish here
          */
+        // The completed case has already delivered through CallbackActivity or
+        // handleAuthResult; anything else leaves Dart's `authenticate` future
+        // hanging with nothing said, which is the silent sign-in that never ends.
+        Log.w(LOG_TAG, "returning without delivering callback for scheme $callbackScheme")
         finish()
     }
 

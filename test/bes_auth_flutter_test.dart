@@ -5,6 +5,66 @@ import 'package:bes_auth_flutter/bes_auth_flutter.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  group('WebAuth.open', () {
+    const channel = MethodChannel('flutter_web_auth_2');
+
+    void answerWith(Future<Object?> Function(MethodCall) handler) {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, handler);
+    }
+
+    setUp(() {
+      WebAuth.lastFailureCode = null;
+      WebAuth.lastFailureMessage = null;
+    });
+
+    tearDown(() {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(channel, null);
+    });
+
+    // The whole point of the field: `open` answers '' for every one of these,
+    // so the code is the only thing left that says which one happened.
+    test('remembers the plugin code behind an empty answer', () async {
+      answerWith((call) async => throw PlatformException(
+          code: 'CANCELED', message: 'User canceled authentication'));
+
+      final result = await WebAuth(redirectUri: 'app://callback')
+          .open('https://example.test/o/authorize/');
+
+      expect(result, '', reason: 'the return type is compatibility surface');
+      expect(WebAuth.lastFailureCode, 'CANCELED');
+      expect(WebAuth.lastFailureMessage, 'User canceled authentication');
+    });
+
+    test('separates a device problem from a user who gave up', () async {
+      answerWith((call) async => throw PlatformException(
+          code: 'NO_BROWSER',
+          message: 'No valid browser available for authentication.'));
+
+      await WebAuth(redirectUri: 'app://callback')
+          .open('https://example.test/o/authorize/');
+
+      expect(WebAuth.lastFailureCode, 'NO_BROWSER');
+    });
+
+    // Left set, the code from a failure two sign-ins ago reads as the reason
+    // for a session that is working.
+    test('forgets the last failure once a sign-in succeeds', () async {
+      answerWith((call) async => throw PlatformException(code: 'CANCELED'));
+      final auth = WebAuth(redirectUri: 'app://callback');
+      await auth.open('https://example.test/o/authorize/');
+      expect(WebAuth.lastFailureCode, isNotNull);
+
+      answerWith((call) async => 'app://callback?code=abc123');
+      final result = await auth.open('https://example.test/o/authorize/');
+
+      expect(result, 'app://callback?code=abc123');
+      expect(WebAuth.lastFailureCode, isNull);
+      expect(WebAuth.lastFailureMessage, isNull);
+    });
+  });
+
   group('BesAuth OAuth state (authorization-code-injection guard)', () {
     const channel = MethodChannel('flutter_web_auth_2');
 

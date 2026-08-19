@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_web_auth_2/flutter_web_auth_2.dart';
 
 /// Opens the SSO/OAuth authorize URL in the system browser
@@ -16,6 +18,18 @@ class WebAuth {
   /// route the redirect back to the app.
   String get callbackUrlScheme => Uri.parse(redirectUri).scheme;
 
+  /// Why the last [open] came back empty, or null after one that succeeded.
+  ///
+  /// [open] answers the same empty string for a user who closed the tab, a
+  /// browser that never came back, and a platform channel that threw — and the
+  /// return type cannot be widened without breaking every caller. This is where
+  /// the difference survives: `CANCELED` is a user, anything else is a bug or a
+  /// device problem, and the caller can finally tell a support ticket which.
+  static String? lastFailureCode;
+
+  /// The failure's own words, for the code that carries no detail of its own.
+  static String? lastFailureMessage;
+
   /// Launches [authUrl] in the system browser and returns the full
   /// redirect URL once the IdP navigates back to [redirectUri], or an
   /// empty string if the user cancels the flow.
@@ -33,8 +47,20 @@ class WebAuth {
           httpsPath: isHttps ? uri.path : null,
         ),
       );
+      lastFailureCode = null;
+      lastFailureMessage = null;
       return result;
-    } on Exception {
+    } on PlatformException catch (e) {
+      // The plugin's own vocabulary: CANCELED, FAILED, NO_BROWSER. Every one of
+      // them used to arrive here and leave as the same empty string.
+      lastFailureCode = e.code;
+      lastFailureMessage = e.message;
+      debugPrint('[bes_auth] web auth failed: ${e.code} ${e.message ?? ''}');
+      return '';
+    } on Exception catch (e) {
+      lastFailureCode = 'UNKNOWN';
+      lastFailureMessage = e.toString();
+      debugPrint('[bes_auth] web auth failed with a non-platform error: $e');
       return '';
     }
   }
