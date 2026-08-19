@@ -48,3 +48,29 @@
   NOTE: the state check requires the authorization server to echo `state`
   unchanged (RFC 6749 §10.12) on every redirect variant; verify end-to-end on
   device before release, as a login fails closed if it is stripped.
+
+## 0.2.1
+* Reliability: fail a web-auth callback that can never be delivered instead of
+  hanging the sign-in forever. Previously, when the Android callback was dropped
+  or dangling without a process death, the Dart `authenticate` future never
+  completed — the login spinner spun forever with no message and no Sentry
+  report. The plugin now completes the pending result with a distinct code:
+  `NO_ACTIVITY` (authenticate called with no attached activity, so no browser
+  could be launched) and `CALLBACK_DROPPED` (a pending callback superseded by a
+  second authenticate on the same scheme, or an Auth Tab that returned without
+  delivering a redirect). A dismissed Custom Tab still reports `CANCELED`.
+* Correctness: the failure above is gated by a per-session id so a superseded
+  management activity cannot evict the live session that replaced it. Two
+  sign-ins on one scheme spawn two `standard`-launchMode activities sharing a
+  scheme-keyed callback map; without the id, a stale activity reaching its drop
+  branch would fail the login the user is still completing. It now fails only a
+  callback it still owns.
+* Reliability: `WebAuth.open` now wraps the browser round-trip in a generous
+  10-minute backstop; if no callback ever arrives it resolves as an empty
+  string with `WebAuth.lastFailureCode = 'TIMEOUT_NO_CALLBACK'` rather than
+  awaiting forever. The ceiling is far beyond any real interactive login, so it
+  cannot abort one — it only bounds a drop path the plugin fixes do not cover.
+
+  These codes reach the host through `WebAuth.lastFailureCode`; a host that
+  reports it (e.g. to Sentry) now gets a distinct identity for each instead of
+  a silent hang.
