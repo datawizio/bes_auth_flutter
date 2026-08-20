@@ -76,3 +76,41 @@
   These codes reach the host through `WebAuth.lastFailureCode`; a host that
   reports it (e.g. to Sentry) now gets a distinct identity for each instead of
   a silent hang.
+
+## 0.2.2
+* Fix (Android, critical): the 0.2.0 vet on ACTION_SEND callback recovery could
+  reject the legitimate redirect. It probed with `ACTION_VIEW` +
+  `CATEGORY_BROWSABLE`, which for an https redirect is a *web intent*, and since
+  Android 12 the platform answers a web-intent query through domain
+  verification — leaving out an app that is not approved for the domain. The
+  SEND recovery exists for devices whose App Link never verified, so on exactly
+  those devices the vet answered false for the URI it must accept: the callback
+  was discarded, the host reported an unknown error, and that user could not
+  sign in at all. The probe now carries no category and queries with no
+  `MATCH_DEFAULT_ONLY`, so the domain gate cannot engage while the filter match
+  is unchanged. What the vet accepts does not widen.
+* Observability (Android): the vet's rejection branch logged nothing, so a
+  discarded redirect — the branch above — left no trace. It now logs the scheme
+  and host of a refused URI, never the query, which carries the code and state.
+* Correctness (Android): the per-session ownership gate from 0.2.1 now also
+  covers the Auth Tab result handler, not just the drop branch. A superseded
+  management activity whose tab was dismissed later could cancel the callback of
+  the sign-in that replaced it — reported as `CANCELED`, which a host tends to
+  treat as "the user changed their mind" and say nothing about. A stale instance
+  now finishes without touching the callback map. The delivery path of a normal
+  sign-in is unchanged: the platform delivers an activity result before it
+  resumes the activity, so the live instance still owns its session when its
+  result arrives.
+* Reliability: `refreshToken` and `logout` now use the same 30-second ceiling
+  the token exchange got in 0.2.0. Both were unbounded, and a black-holed
+  connection is not a socket error — the request simply never completes, which
+  on the refresh path is a returning session that never resolves. Their failure
+  shapes are unchanged: a refresh answers null only when the server refuses the
+  token, so a dead network is still not mistaken for a rejected refresh token.
+* `refreshToken` now sends the app's `USER-AGENT`, which the token exchange
+  already sent to the same endpoint; refreshes were arriving as a bare
+  `Dart/x.y (dart:io)`. A failed token revocation is logged instead of being
+  discarded unread.
+* `BesAuth` takes an optional `httpClient` for tests. Left unset — the
+  production case — every request goes through the top-level `http.post`
+  exactly as before.
