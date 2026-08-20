@@ -49,6 +49,14 @@ class CallbackActivity : Activity() {
                 )
             }
             callback?.success(url.toString())
+        } else {
+            // The other way a redirect dies here: nothing parsed out of the
+            // intent, or the vet above refused what did. A rejection is either a
+            // forged SEND (the case the vet is for) or the vet misfiring on a
+            // legitimate one — and without this line the two are equally
+            // invisible, the sign-in simply ending. Scheme and host only, for the
+            // same reason as above: the query carries the code and the state.
+            Log.w(LOG_TAG, "rejected callback uri: scheme ${url?.scheme}, host ${url?.host}")
         }
         startActivity(AuthenticationManagementActivity.createResponseHandlingIntent(this))
         finish()
