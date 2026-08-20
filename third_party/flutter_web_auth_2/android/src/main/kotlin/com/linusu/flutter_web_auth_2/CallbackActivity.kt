@@ -58,15 +58,30 @@ class CallbackActivity : Activity() {
      * intent-filters — i.e. it matches a redirect the app actually registered (the
      * app:// custom scheme, or the https App Link host and path). Used to vet a URI
      * recovered from an ACTION_SEND extra, which the OS did not route by those
-     * filters. An unverified App Link still matches here: verification governs
-     * auto-opening, not whether the filter matches, so this stays true on the
-     * exact devices (App Links unverified) that need the SEND recovery. Returns
-     * false when [uri] is null (the SEND extra did not parse to a URI). */
+     * filters. Returns false when [uri] is null (the SEND extra did not parse to
+     * a URI).
+     *
+     * The probe deliberately carries NO category and queries with flags 0. Add
+     * CATEGORY_BROWSABLE and this becomes a *web intent* (ACTION_VIEW + an http(s)
+     * URI + BROWSABLE + DEFAULT/MATCH_DEFAULT_ONLY), which the platform answers
+     * through domain verification: since Android 12 an app is left out of the
+     * results for a web intent unless it is approved for that domain. This
+     * recovery exists for devices whose App Link never verified, so that filtering
+     * would return false for the one URI it must accept — the legitimate https
+     * redirect — and the sign-in would be dropped on exactly the devices the SEND
+     * path was added to rescue. With no categories and no MATCH_DEFAULT_ONLY the
+     * domain gate cannot engage, while `IntentFilter.match` still succeeds against
+     * both VIEW filters: an intent carrying no categories matches a filter that
+     * declares more.
+     *
+     * Dropping the category does not widen what is accepted. The activity's only
+     * other filter is the ACTION_SEND text/plain one, which declares no scheme and
+     * a different action, so it cannot match a VIEW-with-data probe — a forged
+     * scheme or host is still rejected. */
     @Suppress("DEPRECATION")
     private fun matchesOwnRedirectFilter(uri: Uri?): Boolean {
         if (uri == null) return false
         val probe = Intent(Intent.ACTION_VIEW, uri)
-            .addCategory(Intent.CATEGORY_BROWSABLE)
         return packageManager.queryIntentActivities(probe, 0).any {
             it.activityInfo?.packageName == packageName &&
                 it.activityInfo?.name == CallbackActivity::class.java.name
