@@ -56,6 +56,12 @@ class BesAuth {
 
   final http.Client? _httpClient;
 
+  /// Ceiling on one request to BES. Unbounded, a request hangs on a captive
+  /// portal or a black-holed connection for as long as the OS lets it — the
+  /// sign-in button spinning, or a token refresh that never resolves. Thirty
+  /// seconds is far past a healthy round-trip to the token endpoint.
+  static const Duration _requestTimeout = Duration(seconds: 30);
+
   Future<http.Response> _post(
     Uri url, {
     Map<String, String>? headers,
@@ -79,29 +85,43 @@ class BesAuth {
     return await _getTokensWithCode(code);
   }
 
-  ///Return null if refresh was failed else return new BesSession
+  /// Return null if refresh was failed else return new BesSession.
+  ///
+  /// null means the server refused the refresh token, which is the caller's cue
+  /// to sign the user out. A transport failure — no route, or nothing answering
+  /// within [_requestTimeout] — throws instead, so a dead network is never read
+  /// as a rejected token.
   Future<BesSession?> refreshToken(String token) async {
-    return await _post(Uri.https(serviceUrl, GET_TOKENS_PATH), body: {
-      "client_id": clientId,
-      'refresh_token': token,
-      "redirect_uri": redirectUri,
-      "client_secret": clientSecret,
-      "grant_type": "refresh_token",
-    }).then((response) {
-      if (response.statusCode == 200) {
-        return BesSession.fromJson(response.body);
-      } else {
-        return null;
-      }
-    });
+    final response = await _post(
+      Uri.https(serviceUrl, GET_TOKENS_PATH),
+      body: {
+        "client_id": clientId,
+        'refresh_token': token,
+        "redirect_uri": redirectUri,
+        "client_secret": clientSecret,
+        "grant_type": "refresh_token",
+      },
+      headers: {'USER-AGENT': await _generateUserAgent()},
+    ).timeout(_requestTimeout);
+
+    if (response.statusCode != 200) return null;
+    return BesSession.fromJson(response.body);
   }
 
   Future<void> logout(BesSession session) async {
-    await _post(Uri.https(serviceUrl, REVOKE_TOKEN_PATH), body: {
-      "client_id": clientId,
-      "token": session.accessToken,
-      "client_secret": clientSecret,
-    });
+    final response = await _post(Uri.https(serviceUrl, REVOKE_TOKEN_PATH),
+        body: {
+          "client_id": clientId,
+          "token": session.accessToken,
+          "client_secret": clientSecret,
+        }).timeout(_requestTimeout);
+
+    // Revocation is best-effort — the caller drops the local session either way
+    // — but a server that keeps refusing it should not do so invisibly.
+    if (response.statusCode != 200) {
+      debugPrint(
+          '[bes_auth] token revocation refused: HTTP ${response.statusCode}');
+    }
   }
 
   Future<String> _openWebLogin() async {
@@ -172,9 +192,7 @@ class BesAuth {
           "client_secret": clientSecret,
           "grant_type": "authorization_code",
         },
-        // Unbounded, this hangs on a captive portal or a black-holed connection
-        // for as long as the OS lets it, with the sign-in button spinning.
-        headers: {'USER-AGENT': userAgent}).timeout(const Duration(seconds: 30));
+        headers: {'USER-AGENT': userAgent}).timeout(_requestTimeout);
 
     if (response.statusCode != 200) {
       // The old code handed an error body straight to BesSession.fromJson,

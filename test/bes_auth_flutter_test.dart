@@ -330,4 +330,95 @@ void main() {
       expect(exchanges, isEmpty);
     });
   });
+
+  // A black-holed connection (captive portal, dead VPN, a middlebox that
+  // accepts the TCP connection and then answers nothing) is not a socket
+  // error: the request just never completes. Unbounded, these two calls wait
+  // on it for as long as the OS lets them — `refreshToken` is the path every
+  // session start goes through, so that hang is a sign-in that never resolves.
+  group('BesAuth token endpoints (unbounded-hang guard)', () {
+    // A server that accepted the request and will never answer it.
+    BesAuth newAuth({List<http.Request>? seen}) => BesAuth(
+          clientId: 'client',
+          serviceUrl: 'bes.example',
+          redirectPath: 'callback',
+          clientSecret: 'secret',
+          httpClient: MockClient((request) {
+            seen?.add(request);
+            return Completer<http.Response>().future;
+          }),
+        );
+
+    test('refreshToken gives up instead of waiting forever', () {
+      fakeAsync((async) {
+        Object? error;
+        var settled = false;
+        newAuth().refreshToken('REFRESH').then<void>(
+          (_) => settled = true,
+          onError: (Object e) {
+            error = e;
+            settled = true;
+          },
+        );
+
+        async.elapse(const Duration(seconds: 29));
+        async.flushMicrotasks();
+        expect(settled, isFalse,
+            reason: 'a slow but living server must not be cut off');
+
+        async.elapse(const Duration(seconds: 2));
+        async.flushMicrotasks();
+        expect(error, isA<TimeoutException>(),
+            reason: 'the refresh must fail loudly, not hang the session');
+      });
+    });
+
+    test('logout gives up instead of waiting forever', () {
+      fakeAsync((async) {
+        Object? error;
+        var settled = false;
+        newAuth()
+            .logout(BesSession(
+              scope: 'read',
+              expiresIn: 36000,
+              tokenType: 'Bearer',
+              accessToken: 'ACCESS',
+              refreshToken: 'REFRESH',
+            ))
+            .then<void>(
+          (_) => settled = true,
+          onError: (Object e) {
+            error = e;
+            settled = true;
+          },
+        );
+
+        async.elapse(const Duration(seconds: 29));
+        async.flushMicrotasks();
+        expect(settled, isFalse);
+
+        async.elapse(const Duration(seconds: 2));
+        async.flushMicrotasks();
+        expect(error, isA<TimeoutException>());
+      });
+    });
+
+    // The exchange identifies the app and the device to BES; a refresh on the
+    // same endpoint used to arrive as a bare `Dart/x.y (dart:io)`.
+    test('refreshToken identifies itself the way the exchange does', () {
+      fakeAsync((async) {
+        final seen = <http.Request>[];
+        newAuth(seen: seen).refreshToken('REFRESH').catchError((_) => null);
+        async.elapse(const Duration(seconds: 1));
+        async.flushMicrotasks();
+
+        expect(seen, hasLength(1));
+        expect(seen.single.headers['user-agent'], startsWith('Mozilla/5.0 ('));
+        expect(seen.single.headers['user-agent'],
+            contains('bes_auth_flutter_test/1.0.0'));
+        expect(Uri.splitQueryString(seen.single.body)['grant_type'],
+            'refresh_token');
+      });
+    });
+  });
 }
