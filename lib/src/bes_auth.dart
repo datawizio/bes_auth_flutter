@@ -38,16 +38,33 @@ class BesAuth {
   final String? redirectUriOverride;
   late WebAuth _webAuth;
 
+  /// [httpClient] exists so a test can drive the token endpoints without a
+  /// network: left null (the production case) every request goes through the
+  /// top-level `http.post`, i.e. a one-shot client per call, exactly as before.
   BesAuth({
     required this.clientId,
     required this.serviceUrl,
     required this.redirectPath,
     required this.clientSecret,
     this.redirectUriOverride,
-  }) {
+    http.Client? httpClient,
+  }) : _httpClient = httpClient {
     _webAuth = WebAuth(
       redirectUri: redirectUri,
     );
+  }
+
+  final http.Client? _httpClient;
+
+  Future<http.Response> _post(
+    Uri url, {
+    Map<String, String>? headers,
+    Object? body,
+  }) {
+    final client = _httpClient;
+    return client == null
+        ? http.post(url, headers: headers, body: body)
+        : client.post(url, headers: headers, body: body);
   }
 
   /// Full OAuth callback URL. [redirectUriOverride] wins when provided
@@ -64,7 +81,7 @@ class BesAuth {
 
   ///Return null if refresh was failed else return new BesSession
   Future<BesSession?> refreshToken(String token) async {
-    return await http.post(Uri.https(serviceUrl, GET_TOKENS_PATH), body: {
+    return await _post(Uri.https(serviceUrl, GET_TOKENS_PATH), body: {
       "client_id": clientId,
       'refresh_token': token,
       "redirect_uri": redirectUri,
@@ -80,7 +97,7 @@ class BesAuth {
   }
 
   Future<void> logout(BesSession session) async {
-    await http.post(Uri.https(serviceUrl, REVOKE_TOKEN_PATH), body: {
+    await _post(Uri.https(serviceUrl, REVOKE_TOKEN_PATH), body: {
       "client_id": clientId,
       "token": session.accessToken,
       "client_secret": clientSecret,
@@ -147,7 +164,7 @@ class BesAuth {
   Future<BesSession> _getTokensWithCode(String code) async {
     final userAgent = await _generateUserAgent();
 
-    final response = await http.post(Uri.https(serviceUrl, GET_TOKENS_PATH),
+    final response = await _post(Uri.https(serviceUrl, GET_TOKENS_PATH),
         body: {
           "code": code,
           "client_id": clientId,

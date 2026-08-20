@@ -3,10 +3,24 @@ import 'dart:async';
 import 'package:fake_async/fake_async.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:bes_auth_flutter/bes_auth_flutter.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  // The token exchange stamps a User-Agent built from PackageInfo; without a
+  // mocked value that call goes to a platform channel no test host answers.
+  // The device half of the string comes from dart:io on a test host, no plugin.
+  PackageInfo.setMockInitialValues(
+    appName: 'bes_auth_flutter_test',
+    packageName: 'io.datawiz.test',
+    version: '1.0.0',
+    buildNumber: '1',
+    buildSignature: '',
+  );
 
   group('WebAuth.open', () {
     const channel = MethodChannel('flutter_web_auth_2');
@@ -188,21 +202,41 @@ void main() {
       });
     }
 
+    setUp(() {
+      WebAuth.lastFailureCode = null;
+      WebAuth.lastFailureMessage = null;
+    });
+
     tearDown(() {
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
           .setMockMethodCallHandler(channel, null);
     });
 
-    BesAuth newAuth() => BesAuth(
+    const tokenJson = '{"scope":"read write","expires_in":36000,'
+        '"token_type":"Bearer","access_token":"ACCESS",'
+        '"refresh_token":"REFRESH"}';
+
+    // Every exchange the test lets through is recorded here, so a test can
+    // assert both that the code WAS exchanged and what it was exchanged with —
+    // and, on the rejection tests, that it was never exchanged at all.
+    late List<Map<String, String>> exchanges;
+
+    BesAuth newAuth({http.Response Function()? answer}) => BesAuth(
           clientId: 'client',
-          // `.invalid` never resolves (RFC 6761). If the state gate passes, the
-          // token exchange fails fast on this host instead of a real network —
-          // so a test reaching exchange throws something that is *not* a
-          // StateMismatchException, which is exactly the signal we assert on.
-          serviceUrl: 'bes.invalid',
+          serviceUrl: 'bes.example',
           redirectPath: 'callback',
           clientSecret: 'secret',
+          // No network in either direction: the browser is the method-channel
+          // mock above, the token endpoint is this client. A test that reaches
+          // the exchange gets a real BesSession back, so the assertions can be
+          // about behaviour instead of about which exception came out.
+          httpClient: MockClient((request) async {
+            exchanges.add(Uri.splitQueryString(request.body));
+            return answer?.call() ?? http.Response(tokenJson, 200);
+          }),
         );
+
+    setUp(() => exchanges = []);
 
     test('sends a non-empty state on the authorize request', () async {
       String? sentState;
@@ -211,12 +245,12 @@ void main() {
         return 'app://callback?code=GOOD&state=${sentState ?? ''}';
       });
 
-      await expectLater(
-        newAuth().authenticate(),
-        throwsA(isNot(isA<StateMismatchException>())),
-      );
+      final session = await newAuth().authenticate();
+
       expect(sentState, isNotNull, reason: 'state must be on the authorize URL');
       expect(sentState, isNotEmpty);
+      expect(session?.accessToken, 'ACCESS',
+          reason: 'the sign-in must complete when the state echoes back');
     });
 
     test('accepts a redirect whose state echoes the value sent', () async {
@@ -225,12 +259,20 @@ void main() {
       answerAuthenticateWith((authUrl) =>
           'app://callback?code=GOOD&state=${authUrl.queryParameters['state']}');
 
-      // Matching state → gate passes → the code exchange is attempted (and only
-      // then fails, for a reason that is not a state mismatch).
-      await expectLater(
-        newAuth().authenticate(),
-        throwsA(isNot(isA<StateMismatchException>())),
-      );
+      final session = await newAuth().authenticate();
+
+      // Matching state → gate passes → the code is exchanged, with the code the
+      // redirect carried. Asserting the exchange itself is what makes this test
+      // fail if the gate ever rejects a legitimate redirect.
+      expect(exchanges, hasLength(1));
+      expect(exchanges.single['code'], 'GOOD');
+      expect(exchanges.single['grant_type'], 'authorization_code');
+      expect(exchanges.single['client_id'], 'client');
+      expect(exchanges.single['redirect_uri'], 'app://callback');
+      expect(session, isA<BesSession>());
+      expect(session!.accessToken, 'ACCESS');
+      expect(session.refreshToken, 'REFRESH');
+      expect(WebAuth.lastFailureCode, isNull);
     });
 
     test('rejects an injected redirect that carries no state', () async {
@@ -242,6 +284,8 @@ void main() {
         newAuth().authenticate(),
         throwsA(isA<StateMismatchException>()),
       );
+      expect(exchanges, isEmpty,
+          reason: 'the injected code must never reach the token endpoint');
     });
 
     test('rejects a redirect whose state is not the value sent', () async {
@@ -252,6 +296,38 @@ void main() {
         newAuth().authenticate(),
         throwsA(isA<StateMismatchException>()),
       );
+      expect(exchanges, isEmpty,
+          reason: 'the injected code must never reach the token endpoint');
+    });
+
+    // The two redirect shapes that used to be folded into the same '' as "the
+    // browser never came back". Both are reachable only past the state gate,
+    // because a legitimate error redirect echoes state like any other.
+    test('reports an authorize error as OAUTH_ERROR, not a silent empty answer',
+        () async {
+      answerAuthenticateWith((authUrl) =>
+          'app://callback?state=${authUrl.queryParameters['state']}'
+          '&error=access_denied&error_description=User%20denied%20access');
+
+      final session = await newAuth().authenticate();
+
+      expect(session, isNull);
+      expect(WebAuth.lastFailureCode, 'OAUTH_ERROR');
+      expect(WebAuth.lastFailureMessage, 'User denied access');
+      expect(exchanges, isEmpty, reason: 'there was no code to exchange');
+    });
+
+    test('reports a redirect with neither code nor error as NO_CODE_IN_REDIRECT',
+        () async {
+      answerAuthenticateWith((authUrl) =>
+          'app://callback?state=${authUrl.queryParameters['state']}');
+
+      final session = await newAuth().authenticate();
+
+      expect(session, isNull);
+      expect(WebAuth.lastFailureCode, 'NO_CODE_IN_REDIRECT');
+      expect(WebAuth.lastFailureMessage, isNull);
+      expect(exchanges, isEmpty);
     });
   });
 }
