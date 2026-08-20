@@ -63,8 +63,10 @@
   management activity cannot evict the live session that replaced it. Two
   sign-ins on one scheme spawn two `standard`-launchMode activities sharing a
   scheme-keyed callback map; without the id, a stale activity reaching its drop
-  branch would fail the login the user is still completing. It now fails only a
-  callback it still owns.
+  branch would fail the login the user is still completing. That branch now
+  fails only a callback it still owns. The gate covers the drop branch alone —
+  the Auth Tab result handler and the no-browser fallback still act on whatever
+  callback the scheme currently holds.
 * Reliability: `WebAuth.open` now wraps the browser round-trip in a generous
   10-minute backstop; if no callback ever arrives it resolves as an empty
   string with `WebAuth.lastFailureCode = 'TIMEOUT_NO_CALLBACK'` rather than

@@ -66,6 +66,28 @@ class AuthenticationManagementActivity : ComponentActivity() {
     }
 
     private fun handleAuthResult(result: AuthResult) {
+        // The same ownership gate the drop branch in onResume applies, for the
+        // same reason. launchMode is `standard`, so a second open() on this
+        // scheme spawns a second instance while the scheme-keyed `callbacks` map
+        // holds only the newest session. Without this, a superseded instance
+        // whose Auth Tab is dismissed later reads the LIVE session's Result out
+        // of the map and cancels it: the sign-in the user is still completing
+        // dies, and a cancel is the one code a host is likely to report quietly,
+        // so the spinner just stops.
+        //
+        // The live instance always passes here. Nothing moves
+        // activeSessionIds[scheme] between the plugin storing it and this
+        // callback except a newer authenticate on the same scheme — which is
+        // exactly the case that must not deliver — and the only other place this
+        // instance clears its own entry is the onResume drop branch, which the
+        // platform runs AFTER delivering an activity result
+        // (performResumeActivity delivers pending results, then resumes).
+        if (FlutterWebAuth2Plugin.activeSessionIds[callbackScheme] != sessionId) {
+            Log.w(LOG_TAG, "stale auth result for scheme $callbackScheme; leaving the live session untouched")
+            finish()
+            return
+        }
+
         val callback = FlutterWebAuth2Plugin.callbacks[callbackScheme]
         if (callback == null) {
             finish()
